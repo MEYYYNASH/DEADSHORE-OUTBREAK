@@ -9,7 +9,7 @@ import com.example.BuildConfig
  */
 object UpdateConfig {
   const val DEFAULT_OWNER = "MEYYYNASH"
-  const val DEFAULT_REPO = "DEADSHORE-SURVIVAL"
+  const val DEFAULT_REPO = "DEADSHORE-OUTBREAK"
   const val API_BASE_URL = "https://api.github.com"
   const val USER_AGENT = "POVSurvival-Android-Updater/1.0"
   const val ALLOW_PRERELEASES = false

@@ -45,7 +45,7 @@ jobs:
           if [ -x "$SDKMANAGER" ]; then
             yes | "$SDKMANAGER" --licenses > /dev/null || true
             if [ -f "app/build.gradle.kts" ] || [ -f "app/build.gradle" ]; then
-              yes | "$SDKMANAGER" --install "platform-tools" "build-tools;36.0.0" "platforms;android-36.1" > /dev/null
+              yes | "$SDKMANAGER" --install "platform-tools" "build-tools;36.0.0" "platforms;android-36" "platforms;android-36.1" > /dev/null
             fi
           fi
 
@@ -102,8 +102,9 @@ jobs:
         run: |
           if [ ! -f "debug.keystore" ]; then
             if [ -f "debug.keystore.base64" ]; then
-              base64 --decode debug.keystore.base64 > debug.keystore
-            else
+              base64 --decode debug.keystore.base64 > debug.keystore || rm -f debug.keystore
+            fi
+            if [ ! -s "debug.keystore" ]; then
               keytool -genkeypair -v -keystore debug.keystore \
                 -storepass android -alias androiddebugkey -keypass android \
                 -keyalg RSA -keysize 2048 -validity 10000 \
@@ -118,6 +119,7 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           mkdir -p "${{ github.workspace }}/release-artifacts"
+          GRADLE_CI_FLAGS="--no-daemon --no-configuration-cache --stacktrace -Dorg.gradle.jvmargs=-Xmx2560m -Dorg.gradle.workers.max=2"
           if [ "${{ steps.detect.outputs.type }}" = "capacitor" ]; then
             cd android
             chmod +x gradlew
@@ -130,18 +132,18 @@ jobs:
               export KEYSTORE_PATH="${{ github.workspace }}/my-upload-key.jks"
               if [ -f "./gradlew" ]; then
                 chmod +x ./gradlew
-                ./gradlew assembleRelease --no-daemon --stacktrace
+                ./gradlew assembleRelease $GRADLE_CI_FLAGS
               else
-                gradle assembleRelease --no-daemon --stacktrace
+                gradle assembleRelease $GRADLE_CI_FLAGS
               fi
               APK_SRC=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
               cp "$APK_SRC" "${{ github.workspace }}/release-artifacts/app-release.apk"
             else
               if [ -f "./gradlew" ]; then
                 chmod +x ./gradlew
-                ./gradlew assembleDebug --no-daemon --stacktrace
+                ./gradlew assembleDebug $GRADLE_CI_FLAGS
               else
-                gradle assembleDebug --no-daemon --stacktrace
+                gradle assembleDebug $GRADLE_CI_FLAGS
               fi
               APK_SRC=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
               cp "$APK_SRC" "${{ github.workspace }}/release-artifacts/app-debug.apk"

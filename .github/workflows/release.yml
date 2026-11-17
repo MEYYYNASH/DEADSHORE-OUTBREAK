@@ -1,0 +1,103 @@
+name: Build & Publish Android Release APK
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
+      - '[0-9]+.[0-9]+.[0-9]+'
+      - '[0-9]+.[0-9]+.[0-9]+-*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag name (e.g. v1.2.0 or 1.2.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build Signed APK & Create GitHub Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Determine release tag
+        id: release_tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Gradle 9.3.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Decode release keystore & validate secrets
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "::error::Missing signing secrets. Add KEYSTORE_BASE64, STORE_PASSWORD, and KEY_PASSWORD in Settings -> Secrets -> Actions."
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 --decode > "${{ github.workspace }}/my-upload-key.jks"
+
+      - name: Build signed release APK
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+            ./gradlew assembleRelease --no-daemon
+          else
+            gradle assembleRelease --no-daemon
+          fi
+
+      - name: Prepare release artifacts & SHA-256 checksum
+        run: |
+          mkdir -p "${{ github.workspace }}/release-artifacts"
+          APK_SOURCE=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -z "$APK_SOURCE" ]; then
+            echo "::error::No release APK found under app/build/outputs/apk/release"
+            exit 1
+          fi
+          cp "$APK_SOURCE" "${{ github.workspace }}/release-artifacts/app-release.apk"
+          cd "${{ github.workspace }}/release-artifacts"
+          sha256sum app-release.apk > app-release.apk.sha256
+          cat app-release.apk.sha256
+
+      - name: Clean up temporary keystore
+        if: always()
+        run: rm -f "${{ github.workspace }}/my-upload-key.jks"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.release_tag.outputs.tag }}
+          name: "POV Survival ${{ steps.release_tag.outputs.tag }}"
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(steps.release_tag.outputs.tag, '-') }}
+          files: |
+            ${{ github.workspace }}/release-artifacts/app-release.apk
+            ${{ github.workspace }}/release-artifacts/app-release.apk.sha256

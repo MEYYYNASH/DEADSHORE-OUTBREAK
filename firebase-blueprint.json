@@ -1,0 +1,123 @@
+{
+  "entities": {
+    "SurvivorSave": {
+      "title": "SurvivorSave",
+      "description": "Persistent player state, 24-slot backpack inventory, 6-slot hotbar, paper-doll equipment, and wave survival progress for POV Survival.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Authenticated Firebase UID of the survivor."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Survivor display callsign."
+        },
+        "wave": {
+          "type": "integer",
+          "description": "Current active or next wave number."
+        },
+        "highestWave": {
+          "type": "integer",
+          "description": "Highest wave reached across runs."
+        },
+        "totalKills": {
+          "type": "integer",
+          "description": "Cumulative zombies eliminated."
+        },
+        "waveKills": {
+          "type": "integer",
+          "description": "Zombies eliminated in the current wave."
+        },
+        "health": {
+          "type": "number",
+          "description": "Player health (0 to 100)."
+        },
+        "food": {
+          "type": "number",
+          "description": "Player hunger meter (0 to 100)."
+        },
+        "water": {
+          "type": "number",
+          "description": "Player hydration meter (0 to 100)."
+        },
+        "stamina": {
+          "type": "number",
+          "description": "Player sprint stamina (0 to 100)."
+        },
+        "activeHotbarSlot": {
+          "type": "integer",
+          "description": "Currently selected hotbar index (0 to 5)."
+        },
+        "m4Mag": {
+          "type": "integer",
+          "description": "Rounds remaining in the M4 Carbine magazine (0 to 30)."
+        },
+        "glockMag": {
+          "type": "integer",
+          "description": "Rounds remaining in the Glock 17 magazine (0 to 17)."
+        },
+        "flashlightOn": {
+          "type": "boolean",
+          "description": "Whether the tactical flashlight is toggled on."
+        },
+        "dayMode": {
+          "type": "boolean",
+          "description": "Optional day/night coastal lighting toggle."
+        },
+        "backpackItems": {
+          "type": "array",
+          "description": "Up to 24 backpack item entries with slotIndex, itemId, and quantity."
+        },
+        "hotbarSlots": {
+          "type": "array",
+          "description": "Exactly 6 hotbar item IDs (empty string for unoccupied slot)."
+        },
+        "equipment": {
+          "type": "object",
+          "description": "Paper-doll equipment map keyed by head, vest, body, back, legs, feet."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "displayName",
+        "wave",
+        "highestWave",
+        "totalKills",
+        "waveKills",
+        "health",
+        "food",
+        "water",
+        "stamina",
+        "activeHotbarSlot",
+        "m4Mag",
+        "glockMag",
+        "flashlightOn",
+        "dayMode",
+        "backpackItems",
+        "hotbarSlots",
+        "equipment",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/saves/{saveId}": {
+      "schema": {
+        "$ref": "#/entities/SurvivorSave"
+      },
+      "description": "Stores a survivor's saved backpack, equipment, vitals, and wave progress scoped strictly to their user document."
+    }
+  }
+}

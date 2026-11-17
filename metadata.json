@@ -1,0 +1,6 @@
+{
+  "name": "POV Survival",
+  "description": "First-person low-poly cel-shaded zombie survival shooter set in a night-time Spanish coastal town with wave combat, looting, backpack inventory, and cloud save.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

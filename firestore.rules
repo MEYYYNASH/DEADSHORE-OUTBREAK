@@ -1,0 +1,107 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidEquipment(eq) {
+      return eq is map &&
+             eq.keys().hasOnly(['head', 'vest', 'body', 'back', 'legs', 'feet']) &&
+             (!('head' in eq) || (eq.head is string && eq.head.size() <= 40)) &&
+             (!('vest' in eq) || (eq.vest is string && eq.vest.size() <= 40)) &&
+             (!('body' in eq) || (eq.body is string && eq.body.size() <= 40)) &&
+             (!('back' in eq) || (eq.back is string && eq.back.size() <= 40)) &&
+             (!('legs' in eq) || (eq.legs is string && eq.legs.size() <= 40)) &&
+             (!('feet' in eq) || (eq.feet is string && eq.feet.size() <= 40));
+    }
+
+    function isValidSurvivorSave(data) {
+      return data.userId is string &&
+             data.userId == request.auth.uid &&
+             data.displayName is string &&
+             data.displayName.size() >= 1 &&
+             data.displayName.size() <= 40 &&
+             data.wave is int && data.wave >= 1 && data.wave <= 9999 &&
+             data.highestWave is int && data.highestWave >= 1 && data.highestWave <= 9999 &&
+             data.totalKills is int && data.totalKills >= 0 && data.totalKills <= 1000000 &&
+             data.waveKills is int && data.waveKills >= 0 && data.waveKills <= 10000 &&
+             data.health is number && data.health >= 0 && data.health <= 100 &&
+             data.food is number && data.food >= 0 && data.food <= 100 &&
+             data.water is number && data.water >= 0 && data.water <= 100 &&
+             data.stamina is number && data.stamina >= 0 && data.stamina <= 100 &&
+             data.activeHotbarSlot is int && data.activeHotbarSlot >= 0 && data.activeHotbarSlot <= 5 &&
+             data.m4Mag is int && data.m4Mag >= 0 && data.m4Mag <= 30 &&
+             data.glockMag is int && data.glockMag >= 0 && data.glockMag <= 17 &&
+             data.flashlightOn is bool &&
+             data.dayMode is bool &&
+             data.backpackItems is list &&
+             data.backpackItems.size() <= 24 &&
+             (data.backpackItems.size() == 0 || data.backpackItems[0] is map) &&
+             data.hotbarSlots is list &&
+             data.hotbarSlots.size() == 6 &&
+             data.hotbarSlots[0] is string &&
+             isValidEquipment(data.equipment) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    match /users/{userId}/saves/{saveId} {
+      allow get: if isSignedIn() && request.auth.uid == userId && isValidId(saveId);
+      allow list: if isSignedIn() && request.auth.uid == userId;
+
+      allow create: if isSignedIn() &&
+                       request.auth.uid == userId &&
+                       isValidId(saveId) &&
+                       incoming().keys().hasAll([
+                         'userId', 'displayName', 'wave', 'highestWave',
+                         'totalKills', 'waveKills', 'health', 'food', 'water',
+                         'stamina', 'activeHotbarSlot', 'm4Mag', 'glockMag',
+                         'flashlightOn', 'dayMode', 'backpackItems',
+                         'hotbarSlots', 'equipment', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'displayName', 'wave', 'highestWave',
+                         'totalKills', 'waveKills', 'health', 'food', 'water',
+                         'stamina', 'activeHotbarSlot', 'm4Mag', 'glockMag',
+                         'flashlightOn', 'dayMode', 'backpackItems',
+                         'hotbarSlots', 'equipment', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidSurvivorSave(incoming());
+
+      allow update: if isSignedIn() &&
+                       request.auth.uid == userId &&
+                       isValidId(saveId) &&
+                       isValidSurvivorSave(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'displayName', 'wave', 'highestWave', 'totalKills',
+                         'waveKills', 'health', 'food', 'water', 'stamina',
+                         'activeHotbarSlot', 'm4Mag', 'glockMag',
+                         'flashlightOn', 'dayMode', 'backpackItems',
+                         'hotbarSlots', 'equipment', 'updatedAt'
+                       ]);
+
+      allow delete: if isSignedIn() && request.auth.uid == userId && isValidId(saveId);
+    }
+  }
+}

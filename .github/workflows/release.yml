@@ -1,37 +1,27 @@
-name: Build & Publish Android Release APK
+name: Build & Release Android APK
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*.*.*'
       - '[0-9]*.*.*'
+  release:
+    types: [published]
   workflow_dispatch:
-    inputs:
-      tag_name:
-        description: 'Release tag name (e.g. v1.2.0 or 1.2.0)'
-        required: true
-        type: string
 
 permissions:
   contents: write
 
 jobs:
-  release:
-    name: Build Signed APK & Create GitHub Release
+  build-and-release:
+    name: Build APK & Publish Assets
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Determine release tag
-        id: release_tag
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=${{ inputs.tag_name }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -39,63 +29,135 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Set up Gradle 9.3.1
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.3.1'
 
-      - name: Decode release keystore & validate secrets
+      - name: Detect project type
+        id: detect
+        run: |
+          if [ -f "app/build.gradle.kts" ] || [ -f "app/build.gradle" ]; then
+            echo "type=native" >> "$GITHUB_OUTPUT"
+          elif [ -f "index.html" ] || [ -d "www" ] || [ -f "capacitor.config.json" ]; then
+            echo "type=capacitor" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::No app/build.gradle(.kts) or index.html found."
+            exit 1
+          fi
+
+      - name: Prepare Capacitor Android project (if web game)
+        if: steps.detect.outputs.type == 'capacitor'
+        run: |
+          if [ ! -f "package.json" ]; then
+            npm init -y
+          fi
+          npm install @capacitor/core@^6.2.0 @capacitor/cli@^6.2.0 @capacitor/android@^6.2.0
+          if [ -f "index.html" ]; then
+            rm -rf www
+            mkdir -p www
+            for item in *; do
+              case "$item" in
+                www|android|node_modules|package.json|package-lock.json|capacitor.config.json|release-artifacts)
+                  continue
+                  ;;
+              esac
+              cp -r "$item" www/
+            done
+          fi
+          if [ ! -f "capacitor.config.json" ]; then
+            npx cap init "DEADSHORE" "com.meyyynash.deadshore" --web-dir www
+          fi
+          if [ ! -d "android" ]; then
+            npx cap add android
+          fi
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          if ! grep -q "android:screenOrientation" "$MANIFEST"; then
+            sed -i 's/android:name=".MainActivity"/android:name=".MainActivity"\n            android:screenOrientation="sensorLandscape"/' "$MANIFEST"
+          fi
+          npx cap sync android
+
+      - name: Prepare debug keystore (when building debug)
+        if: steps.detect.outputs.type == 'native'
+        run: |
+          if [ ! -f "debug.keystore" ]; then
+            if [ -f "debug.keystore.base64" ]; then
+              base64 --decode debug.keystore.base64 > debug.keystore
+            else
+              keytool -genkeypair -v -keystore debug.keystore \
+                -storepass android -alias androiddebugkey -keypass android \
+                -keyalg RSA -keysize 2048 -validity 10000 \
+                -dname "CN=Android Debug,O=Android,C=US"
+            fi
+          fi
+
+      - name: Build APK
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$KEY_PASSWORD" ]; then
-            echo "::error::Missing signing secrets. Add KEYSTORE_BASE64, STORE_PASSWORD, and KEY_PASSWORD in Settings -> Secrets -> Actions."
-            exit 1
-          fi
-          echo "$KEYSTORE_BASE64" | base64 --decode > "${{ github.workspace }}/my-upload-key.jks"
-
-      - name: Build signed release APK
-        env:
-          KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
-          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-            ./gradlew assembleRelease --no-daemon
-          else
-            gradle assembleRelease --no-daemon
-          fi
-
-      - name: Prepare release artifacts & SHA-256 checksum
-        run: |
           mkdir -p "${{ github.workspace }}/release-artifacts"
-          APK_SOURCE=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
-          if [ -z "$APK_SOURCE" ]; then
-            echo "::error::No release APK found under app/build/outputs/apk/release"
-            exit 1
+          if [ "${{ steps.detect.outputs.type }}" = "capacitor" ]; then
+            cd android
+            chmod +x gradlew
+            ./gradlew assembleDebug --no-daemon
+            APK_SRC=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+            cp "$APK_SRC" "${{ github.workspace }}/release-artifacts/DEADSHORE-debug.apk"
+          else
+            if [ -n "$KEYSTORE_BASE64" ] && [ -n "$STORE_PASSWORD" ] && [ -n "$KEY_PASSWORD" ]; then
+              echo "$KEYSTORE_BASE64" | base64 --decode > "${{ github.workspace }}/my-upload-key.jks"
+              export KEYSTORE_PATH="${{ github.workspace }}/my-upload-key.jks"
+              if [ -f "./gradlew" ]; then
+                chmod +x ./gradlew
+                ./gradlew assembleRelease --no-daemon
+              else
+                gradle assembleRelease --no-daemon
+              fi
+              APK_SRC=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+              cp "$APK_SRC" "${{ github.workspace }}/release-artifacts/app-release.apk"
+            else
+              if [ -f "./gradlew" ]; then
+                chmod +x ./gradlew
+                ./gradlew assembleDebug --no-daemon
+              else
+                gradle assembleDebug --no-daemon
+              fi
+              APK_SRC=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+              cp "$APK_SRC" "${{ github.workspace }}/release-artifacts/app-debug.apk"
+            fi
           fi
-          cp "$APK_SOURCE" "${{ github.workspace }}/release-artifacts/app-release.apk"
           cd "${{ github.workspace }}/release-artifacts"
-          sha256sum app-release.apk > app-release.apk.sha256
-          cat app-release.apk.sha256
+          APK_FILE=$(ls *.apk | head -n 1)
+          sha256sum "$APK_FILE" > "${APK_FILE}.sha256"
+          cat "${APK_FILE}.sha256"
 
-      - name: Clean up temporary keystore
+      - name: Clean up temporary keystores
         if: always()
-        run: rm -f "${{ github.workspace }}/my-upload-key.jks"
+        run: |
+          rm -f "${{ github.workspace }}/my-upload-key.jks"
+          rm -f "${{ github.workspace }}/debug.keystore"
 
-      - name: Publish GitHub Release
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DEADSHORE-apk
+          path: ${{ github.workspace }}/release-artifacts/*
+          if-no-files-found: error
+
+      - name: Attach APK to GitHub Release
+        if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ steps.release_tag.outputs.tag }}
-          name: "POV Survival ${{ steps.release_tag.outputs.tag }}"
           generate_release_notes: true
-          draft: false
-          prerelease: ${{ contains(steps.release_tag.outputs.tag, '-') }}
-          files: |
-            ${{ github.workspace }}/release-artifacts/app-release.apk
-            ${{ github.workspace }}/release-artifacts/app-release.apk.sha256
+          files: ${{ github.workspace }}/release-artifacts/*
